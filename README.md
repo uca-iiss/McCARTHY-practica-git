@@ -1,0 +1,1 @@
+# McCARTHY-practica-git
