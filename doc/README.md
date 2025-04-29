@@ -1,6 +1,6 @@
 # Despliegue de Jenkins + Docker-in-Docker usando Terraform
 
-En este documento vamos a explicar paso a paso cómo replicar el proceso de despliegue, desde la construcción de la imagen personalizada de Jenkins hasta la configuración del pipeline.
+En este documento vamos a explicar paso a paso cómo replicar el proceso de despliegue, desde la construcción de la imagen personalizada de Jenkins hasta la configuración del pipeline para lanzar la aplicación.
 
 ---
 
@@ -9,18 +9,25 @@ En este documento vamos a explicar paso a paso cómo replicar el proceso de desp
 Primero crea un archivo `Dockerfile` con el siguiente contenido:
 
 ```dockerfile
-FROM jenkins/jenkins
+#Utilizamos la imagen oficial de Jenkins como base 
+FROM jenkins/jenkins:lts
+
+#Cambiamos al usuario root para poder instalas software dentro del contenedor ya que el usuario jenkins por defecto no puede
 USER root
-RUN apt-get update && apt-get install -y lsb-release
-RUN curl -fsSLo /usr/share/keyrings/docker-archive-keyring.asc \
-https://download.docker.com/linux/debian/gpg
-RUN echo "deb [arch=$(dpkg --print-architecture) \
-signed-by=/usr/share/keyrings/docker-archive-keyring.asc] \
-https://download.docker.com/linux/debian \
-$(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
-RUN apt-get update && apt-get install -y docker-ce-cli
+
+# Instalar Docker CLI en Jenkins
+RUN apt-get update && \
+    apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release && \
+    curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list && \
+    apt-get update && \
+    apt-get install -y docker-ce-cli
+
 USER jenkins
-RUN jenkins-plugin-cli --plugins "blueocean docker-workflow"
+
+# Plugins para usar Docker y BlueOcean
+RUN jenkins-plugin-cli --plugins "docker-workflow blueocean"
+
 ```
 
 Luego, construye la imagen:
@@ -36,6 +43,7 @@ docker build -t custom-jenkins .
 Crea un archivo `main.tf` con la siguiente configuración:
 
 ```hcl
+//Configuramos terraform y el proveedor Docker que vamos a utilizar
 terraform {
   required_providers {
     docker = {
@@ -47,33 +55,43 @@ terraform {
 
 provider "docker" {}
 
+//Creamos una imagen Docker llamada custom-jenkins la cual ya habremos creado previamente en mi sistema local
 resource "docker_image" "jenkins" {
-  name         = "jenkins-custome"
-  keep_locally = false
+  name         = "custom-jenkins"
+  keep_locally = true
 }
 
+//Creamos un contenedor jenkins a partir de la imagen custom-jenkins
 resource "docker_container" "jenkins" {
   name  = "jenkins"
   image = docker_image.jenkins.name
+
+//Con esto hacemos que Jenkins se ejecute como root para que pueda acceder al socket de Docker
+  user = "root"
+
+//Aqui asignamos el puerto por el que podremos acceder a jenkins
   ports {
     internal = 8080
     external = 8080
   }
+  //Montamos el socket docker dentro del contenedor para poder ejecutar comandos docker dentro de jenkins
   volumes {
     host_path      = "/var/run/docker.sock"
     container_path = "/var/run/docker.sock"
   }
 }
 
+//Aqui descargamos la imagen oficial de Docker in Docker
 resource "docker_image" "dind" {
   name         = "docker:dind"
   keep_locally = false
 }
 
+//Lanzamos un contenedor de Docker in Docker
 resource "docker_container" "dind" {
-  name        = "docker-in-docker"
-  image       = docker_image.dind.name
-  privileged  = true
+  name       = "docker-in-docker"
+  image      = docker_image.dind.name
+  privileged = true
 }
 
 
@@ -107,8 +125,6 @@ Copia la contraseña y pégala en la pantalla de desbloqueo.
 
 - Finaliza la instalación usando los **plugins sugeridos**.
 - Crea tu **primer usuario administrador**.
-- Asegúrate de que Jenkins puede acceder al Docker daemon (`/var/run/docker.sock`).
-- Verifica que tienes instalado el plugin **Docker Pipeline**.
 
 ---
 
@@ -123,61 +139,32 @@ Copia la contraseña y pégala en la pantalla de desbloqueo.
 
 ```groovy
 pipeline {
-    agent any
-
+    agent {
+        docker {
+            image 'node:lts-buster-slim'
+            args '-p 3000:3000'
+        }
+    }
     stages {
-        stage('Clone repository') {
+        stage('Build') { 
             steps {
-                checkout scm
+                sh 'npm install' 
             }
         }
-        stage('Build Docker image') {
+        stage('run') {
             steps {
-                sh 'docker build -t myapp:latest .'
-            }
-        }
-        stage('Run Docker container') {
-            steps {
-                sh 'docker run -d -p 3000:3000 myapp:latest'
+                sh 'npm start'
             }
         }
     }
 }
 ```
-4. Además debemos crear en el main un dockerfile con el cual le diremos como debe ser la aplicacion que se lance
 
-```groovy
-# Usa una imagen oficial de Node
-FROM node:18
-
-# Crea un directorio de trabajo
-WORKDIR /usr/src/app
-
-# Copia el package.json y package-lock.json
-COPY package*.json ./
-
-# Instala dependencias
-RUN npm install
-
-# Copia el resto del código
-COPY . .
-
-# Expone el puerto que usa la app
-EXPOSE 3000
-
-# Comando para lanzar la app
-CMD ["npm", "start"]
-```
 ---
 
-## 6. Notas importantes
+## 6. Ejecutar Pipeline
 
-- Si ves errores de permisos, asegúrate que Jenkins puede usar `/var/run/docker.sock`, en caso contrario dale permisos para ello.
-- Si necesitas limpiar todo para empezar de nuevo (que a veces hace falta):
-
-```bash
-docker system prune -a --volumes -f
-```
+Por último ejecutamos el pipeline y podremos ver como lanza la aplicación React en el puerto 3000 tal como lo habiamos congifurado al principio.
 
 ---
 
