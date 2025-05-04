@@ -139,32 +139,38 @@ Copia la contraseña y pégala en la pantalla de desbloqueo.
 
 ```groovy
 pipeline {
-    agent {
-        docker {
-            image 'node:lts-buster-slim'
-            args '-p 3000:3000'
-        }
-    }
+    agent none
     stages {
-        stage('Build') { 
+        stage('Build') {
+            agent {
+                docker {
+                    image 'python:2-alpine'
+                }
+            }
             steps {
-                sh 'npm install' 
+                sh 'python -m py_compile sources/add2vals.py sources/calc.py'
             }
         }
-        stage('run') {
+        stage('Keep Alive') {
+            agent {
+                docker {
+                    image 'python:2-alpine'
+                }
+            }
             steps {
-                sh 'npm start'
+                echo 'Manteniendo el contenedor activo...'
+                sh 'tail -f /dev/null'
             }
         }
     }
 }
 ```
-
+4. Hemos añadido al Jenkinsfile del tutorial una nueva tarea para que se mantenga abierto el contenedor y asi poder probarlo desde la terminal.
 ---
 
 ## 6. Ejecutar Pipeline
 
-Por último ejecutamos el pipeline y podremos ver como lanza la aplicación React en el puerto 3000 tal como lo habiamos congifurado al principio.
+Por último ejecutamos el pipeline y podremos ver como se lanza el contenedor.
 
 ---
 
