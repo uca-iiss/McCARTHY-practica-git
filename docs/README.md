@@ -139,38 +139,51 @@ Copia la contraseña y pégala en la pantalla de desbloqueo.
 
 ```groovy
 pipeline {
-    agent none
-    stages {
-        stage('Build') {
-            agent {
-                docker {
-                    image 'python:2-alpine'
-                }
-            }
-            steps {
-                sh 'python -m py_compile sources/add2vals.py sources/calc.py'
-            }
-        }
-        stage('Keep Alive') {
-            agent {
-                docker {
-                    image 'python:2-alpine'
-                }
-            }
-            steps {
-                echo 'Manteniendo el contenedor activo...'
-                sh 'tail -f /dev/null'
-            }
-        }
+  agent { docker { image 'python:3.7.2' } }
+  options {
+    skipStagesAfterUnstable()
+  }
+  stages {
+    stage('Build') {
+      steps {
+        sh 'python -m py_compile sources/add2vals.py sources/calc.py'
+        stash(name: 'compiled-results', includes: 'sources/*.py*')
+      }
     }
+    stage('Test') {
+      steps {
+        sh '''
+          pip install pytest
+          mkdir -p test-reports
+          pytest --junit-xml=test-reports/results.xml sources/test_calc.py
+        '''
+      }
+      post {
+        always {
+          junit 'test-reports/results.xml'
+        }
+      }
+    }
+    stage('Deliver') {
+      steps {
+        sh 'pip install pyinstaller'
+        sh 'pyinstaller --onefile sources/add2vals.py'
+      }
+      post {
+        success {
+          archiveArtifacts 'dist/add2vals'
+        }
+      }
+    }
+  }
 }
 ```
-4. Hemos añadido al Jenkinsfile del tutorial una nueva tarea para que se mantenga abierto el contenedor y asi poder probarlo desde la terminal.
+4. He modificado el Jenkinsfile del tutorial para que instale la ultima versión de python para que pueda ejecutar las pruebas
 ---
 
 ## 6. Ejecutar Pipeline
 
-Por último ejecutamos el pipeline y podremos ver como se lanza el contenedor.
+Por último ejecutamos el pipeline.
 
 ---
 
